@@ -1,0 +1,33 @@
+hydra:
+  job_logging:
+#    formatters:
+#      simple:
+#        format: '[]'
+    root:
+      handlers: [file, console]  # logging to file only.
+  run:
+    #dir: logs/${dataset}
+    dir: logs/${dataset}
+
+
+dataset: cifar10
+data_dir: data
+classifier_name: resnet18
+
+
+# training parameters
+lr_min: 0.
+lr_max: 0.2
+momentum: 0.9
+weight_decay: 5e-4
+epsilon: 4/255
+epsilon_iter: 0.01
+n_classes: 10
+n_batch_train: 128
+n_batch_test: 200
+n_epochs: 15
+
+early_stop: True
+
+seed: 1234
+device: cpu
