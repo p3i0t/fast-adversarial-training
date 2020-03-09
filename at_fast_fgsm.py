@@ -39,8 +39,6 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
 
-    clip_min.to(args.device)
-    clip_max.to(args.device)
     for batch_idx, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
         # start with uniform noise
@@ -48,13 +46,13 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         for i in range(len(eps)):
             delta[:, i, :, :].uniform_(-eps[i].item(), eps[i].item()) # set to zero before interations on each mini-batch
         delta.requires_grad_()
-        delta = clamp(delta, clip_min - x, clip_max - x)
+        delta = clamp(delta, clip_min.to(args.device) - x, clip_max.to(args.device) - x)
 
         loss = F.cross_entropy(classifier(x + delta), y)
         grad_delta = torch.autograd.grad(loss, delta)[0].detach()  # get grad of noise
 
         # update delta with grad
-        delta = (delta + torch.sign(grad_delta) * eps_iter).clamp_(-eps, eps)
+        delta = clamp(delta + torch.sign(grad_delta) * eps_iter, -eps, eps)
         delta = clamp(delta, clip_min - x, clip_max - x)
 
         # real forward
