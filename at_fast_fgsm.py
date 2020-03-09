@@ -30,7 +30,7 @@ def train_epoch(classifier, data_loader, args, optimizer):
     classifier.train()
 
     eps = eval(args.epsilon)
-    eps_iter = args.epsilon_iter
+    eps_iter = eval(args.epsilon_iter)
 
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
@@ -41,7 +41,6 @@ def train_epoch(classifier, data_loader, args, optimizer):
         delta = torch.zeros_like(x).uniform_(-eps, eps)  # set to zero before interations on each mini-batch
         delta.requires_grad_()
 
-        optimizer.zero_grad()
         x_ = (x + delta).clamp_(clip_min, clip_max)
         loss = F.cross_entropy(classifier(x_), y)
         grad_delta = torch.autograd.grad(loss, delta)  # get grad of noise

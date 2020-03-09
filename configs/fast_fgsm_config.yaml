@@ -20,8 +20,8 @@ lr_min: 1e-3
 lr_max: 0.2
 momentum: 0.9
 weight_decay: 5e-4
-epsilon: 4/255
-epsilon_iter: 0.01
+epsilon: 8/255
+epsilon_iter: 2/255
 n_classes: 10
 n_batch_train: 128
 n_batch_test: 200
