@@ -127,7 +127,7 @@ def run(args: DictConfig) -> None:
         if loss < optimal_loss:
             optimal_loss = loss
             torch.save(classifier.state_dict(), '{}_at.pth'.format(args.classifier_name))
-        logger.info('Epoch {}, lr: {:.4f}, loss: {:.4f}, acc: {:.4f}'.format(epoch, lr_scheduler.get_lr()[0], loss, acc))
+        logger.info('Epoch {}, lr: {:.4f}, loss: {:.4f}, acc: {:.4f}'.format(epoch, scheduler.get_lr()[0], loss, acc))
 
     clean_loss, clean_acc = eval_epoch(classifier, test_loader, args, adversarial=False)
     adv_loss, adv_acc = eval_epoch(classifier, test_loader, args, adversarial=True)
