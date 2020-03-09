@@ -9,6 +9,8 @@ from torch.utils.data import DataLoader
 from advertorch.attacks import LinfPGDAttack
 from utils import cal_parameters, get_dataset, get_model, AverageMeter
 
+from preact_resnet import PreActResNet18
+
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -105,8 +107,8 @@ def run(args: DictConfig) -> None:
     device = "cuda" if cuda_available and args.device == 'cuda' else "cpu"
 
     n_classes = args.n_classes
-    classifier = get_model(name=args.classifier_name, n_classes=n_classes).to(device)
-
+    #classifier = get_model(name=args.classifier_name, n_classes=n_classes).to(device)
+    classifier = PreActResNet18().to(device)
     logger.info('Classifier: {}, # parameters: {}'.format(args.classifier_name, cal_parameters(classifier)))
 
     data_dir = hydra.utils.to_absolute_path(args.data_dir)
