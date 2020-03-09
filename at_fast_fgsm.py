@@ -40,17 +40,17 @@ def train_epoch(classifier, data_loader, args, optimizer):
         # start with uniform noise
         delta = torch.zeros_like(x).uniform_(-eps, eps)  # set to zero before interations on each mini-batch
         delta.requires_grad_()
+        delta.clamp_(clip_min - x, clip_max - x)
 
-        x_ = (x + delta).clamp_(clip_min, clip_max)
-        loss = F.cross_entropy(classifier(x_), y)
+        loss = F.cross_entropy(classifier(x + delta), y)
         grad_delta = torch.autograd.grad(loss, delta)  # get grad of noise
 
         # update delta with grad
         delta.data = (delta + torch.sign(grad_delta[0].detach()) * eps_iter).clamp_(-eps, eps)
-        x_ = (x + delta).clamp_(clip_min, clip_max)
+        delta.clamp_(clip_min - x, clip_max - x)
 
         # real forward
-        logits = classifier(x_)
+        logits = classifier(x + delta)
         loss = F.cross_entropy(logits, y)
 
         optimizer.zero_grad()
