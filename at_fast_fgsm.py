@@ -18,6 +18,10 @@ clip_min = 0.
 clip_max = 1.
 
 
+def clamp(X, lower_limit, upper_limit):
+    return torch.max(torch.min(X, upper_limit), lower_limit)
+
+
 def train_epoch(classifier, data_loader, args, optimizer):
     """
     Run one epoch.
@@ -40,14 +44,14 @@ def train_epoch(classifier, data_loader, args, optimizer):
         # start with uniform noise
         delta = torch.zeros_like(x).uniform_(-eps, eps)  # set to zero before interations on each mini-batch
         delta.requires_grad_()
-        delta.clamp_(clip_min - x, clip_max - x)
+        clamp(delta, clip_min - x, clip_max - x)
 
         loss = F.cross_entropy(classifier(x + delta), y)
         grad_delta = torch.autograd.grad(loss, delta)  # get grad of noise
 
         # update delta with grad
         delta.data = (delta + torch.sign(grad_delta[0].detach()) * eps_iter).clamp_(-eps, eps)
-        delta.clamp_(clip_min - x, clip_max - x)
+        clamp(delta, clip_min - x, clip_max - x)
 
         # real forward
         logits = classifier(x + delta)
