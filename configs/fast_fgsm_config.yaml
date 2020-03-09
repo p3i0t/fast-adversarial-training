@@ -16,7 +16,7 @@ classifier_name: resnet18
 
 
 # training parameters
-lr_min: 1e-3
+lr_min: 1e-4
 lr_max: 0.2
 momentum: 0.9
 weight_decay: 5e-4
