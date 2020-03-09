@@ -32,15 +32,19 @@ def get_dataset(data_name='cifar10', data_dir='data', train=True, crop_flip=True
     :param crop_flip: bool, whether use crop_flip as data augmentation.
     :return: pytorch dataset.
     """
+    mean_ = [0.5] * 3
+    std_ = [0.5] * 3
 
     transform_3d_crop_flip = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
+        transforms.Normalize(mean_, std_)
     ])
 
     transform_3d = transforms.Compose([
         transforms.ToTensor(),
+        transforms.Normalize(mean_, std_)
     ])
 
     if train:
