@@ -30,4 +30,4 @@ n_epochs: 15
 early_stop: True
 
 seed: 1234
-device: cpu
+device: cuda
