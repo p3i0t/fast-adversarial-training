@@ -68,7 +68,7 @@ def eval_epoch(classifier, data_loader, args, adversarial=False):
     classifier.eval()
 
     eps = eval(args.epsilon)
-    eps_iter = args.epsilon_iter
+    eps_iter = eval(args.epsilon_iter)
 
     if adversarial is True:
         adversary = LinfPGDAttack(classifier, eps=eps, eps_iter=eps_iter)
