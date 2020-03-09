@@ -72,6 +72,55 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     return loss_meter.avg, acc_meter.avg
 
 
+def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None):
+    max_loss = torch.zeros(y.shape[0]).cuda()
+    max_delta = torch.zeros_like(X).cuda()
+    for zz in range(restarts):
+        delta = torch.zeros_like(X).cuda()
+        for i in range(len(epsilon)):
+            delta[:, i, :, :].uniform_(-epsilon[i].item(), epsilon[i][0][0].item())
+        delta.data = clamp(delta, clip_min.cuda() - X, clip_max.cuda() - X)
+        delta.requires_grad = True
+
+        for _ in range(attack_iters):
+            output = model(X + delta)
+            index = torch.where(output.max(1)[1] == y)
+            if len(index[0]) == 0:
+                break
+            loss = F.cross_entropy(output, y)
+
+            grad = delta.grad.detach()
+            d = delta[index[0], :, :, :]
+            g = grad[index[0], :, :, :]
+            d = clamp(d + alpha * torch.sign(g), -epsilon, epsilon)
+            d = clamp(d, clip_min.cuda() - X[index[0], :, :, :], clip_max.cuda() - X[index[0], :, :, :])
+            delta.data[index[0], :, :, :] = d
+            delta.grad.zero_()
+        all_loss = F.cross_entropy(model(X+delta), y, reduction='none').detach()
+        max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
+        max_loss = torch.max(max_loss, all_loss)
+    return max_delta
+
+
+def evaluate_pgd(test_loader, model, attack_iters, restarts):
+    epsilon = (8 / 255.) / std_.cuda()
+    alpha = (2 / 255.) / std_.cuda()
+    pgd_loss = 0
+    pgd_acc = 0
+    n = 0
+    model.eval()
+    for i, (X, y) in enumerate(test_loader):
+        X, y = X.cuda(), y.cuda()
+        pgd_delta = attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts)
+        with torch.no_grad():
+            output = model(X + pgd_delta)
+            loss = F.cross_entropy(output, y)
+            pgd_loss += loss.item() * y.size(0)
+            pgd_acc += (output.max(1)[1] == y).sum().item()
+            n += y.size(0)
+    return pgd_loss/n, pgd_acc/n
+
+
 def eval_epoch(classifier, data_loader, args, adversarial=False):
     classifier.eval()
 
@@ -133,7 +182,10 @@ def run(args: DictConfig) -> None:
     clean_loss, clean_acc = eval_epoch(classifier, test_loader, args, adversarial=False)
     adv_loss, adv_acc = eval_epoch(classifier, test_loader, args, adversarial=True)
     logger.info('Clean loss: {:.4f}, acc: {:.4f}'.format(clean_loss, clean_acc))
-    logger.info('Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
+    logger.info('[Advertorch]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
+
+    adv_loss, adv_acc = evaluate_pgd(test_loader, classifier, attack_iters=50, restarts=1)
+    logger.info('[Other]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
 
 
 if __name__ == '__main__':
