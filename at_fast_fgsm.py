@@ -39,6 +39,8 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
 
+    clip_min.to(args.device)
+    clip_max.to(args.device)
     for batch_idx, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
         # start with uniform noise
