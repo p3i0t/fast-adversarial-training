@@ -14,8 +14,8 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 logger = logging.getLogger(__name__)
 
-clip_min = 0.
-clip_max = 1.
+clip_min = -1.0
+clip_max = 1.0
 
 
 def clamp(X, lower_limit, upper_limit):
