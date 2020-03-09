@@ -51,7 +51,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         grad_delta = torch.autograd.grad(loss, delta)[0].detach()  # get grad of noise
 
         # update delta with grad
-        delta.data = clamp(delta + torch.sign(grad_delta) * eps_iter, -eps, eps)
+        delta = (delta + torch.sign(grad_delta) * eps_iter).clamp_(-eps, eps)
         delta = clamp(delta, clip_min - x, clip_max - x)
 
         # real forward
