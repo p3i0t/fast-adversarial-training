@@ -22,13 +22,14 @@ def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
 
-def train_epoch(classifier, data_loader, args, optimizer):
+def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     """
     Run one epoch.
     :param classifier: torch.nn.Module representing the classifier.
     :param data_loader: dataloader
     :param args:
-    :param optimizer: .
+    :param optimizer:
+    :param scheduler:
     :return: mean of loss, mean of accuracy of this epoch.
     """
     classifier.train()
@@ -44,14 +45,14 @@ def train_epoch(classifier, data_loader, args, optimizer):
         # start with uniform noise
         delta = torch.zeros_like(x).uniform_(-eps, eps)  # set to zero before interations on each mini-batch
         delta.requires_grad_()
-        clamp(delta, clip_min - x, clip_max - x)
+        delta = clamp(delta, clip_min - x, clip_max - x)
 
         loss = F.cross_entropy(classifier(x + delta), y)
-        grad_delta = torch.autograd.grad(loss, delta)  # get grad of noise
+        grad_delta = torch.autograd.grad(loss, delta)[0].detach()  # get grad of noise
 
         # update delta with grad
-        delta.data = (delta + torch.sign(grad_delta[0].detach()) * eps_iter).clamp_(-eps, eps)
-        clamp(delta, clip_min - x, clip_max - x)
+        delta.data = clamp(delta + torch.sign(grad_delta) * eps_iter, -eps, eps)
+        delta = clamp(delta, clip_min - x, clip_max - x)
 
         # real forward
         logits = classifier(x + delta)
@@ -60,6 +61,8 @@ def train_epoch(classifier, data_loader, args, optimizer):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        if scheduler:
+            scheduler.step()
 
         loss_meter.update(loss.item(), x.size(0))
         acc = (logits.argmax(dim=1) == y).float().mean().item()
