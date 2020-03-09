@@ -1,7 +1,17 @@
+import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
 from torchvision.models import resnet18, resnet34, resnet50,\
     wide_resnet50_2, wide_resnet101_2, resnext50_32x4d, resnext101_32x8d
+
+cifar10_mean = [0.5] * 3
+cifar10_std = [0.5] * 3
+
+mean_ = torch.FloatTensor(cifar10_mean).view(3, 1, 1)
+std_ = torch.FloatTensor(cifar10_std).view(3, 1, 1)
+
+clip_min = (0. - mean_) / std_
+clip_max = (1. - mean_) / std_
 
 
 class AverageMeter(object):
@@ -32,19 +42,17 @@ def get_dataset(data_name='cifar10', data_dir='data', train=True, crop_flip=True
     :param crop_flip: bool, whether use crop_flip as data augmentation.
     :return: pytorch dataset.
     """
-    mean_ = [0.5] * 3
-    std_ = [0.5] * 3
 
     transform_3d_crop_flip = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(mean_, std_)
+        transforms.Normalize(cifar10_mean, cifar10_std)
     ])
 
     transform_3d = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean_, std_)
+        transforms.Normalize(cifar10_mean, cifar10_std)
     ])
 
     if train:

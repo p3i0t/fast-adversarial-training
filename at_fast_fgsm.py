@@ -7,7 +7,7 @@ from torch.optim import SGD, lr_scheduler
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from advertorch.attacks import LinfPGDAttack
-from utils import cal_parameters, get_dataset, get_model, AverageMeter
+from utils import cal_parameters, get_dataset, get_model, AverageMeter, clip_max, clip_min, mean_, std_
 
 from preact_resnet import PreActResNet18
 
@@ -15,9 +15,6 @@ import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 logger = logging.getLogger(__name__)
-
-clip_min = -1.0
-clip_max = 1.0
 
 
 def clamp(X, lower_limit, upper_limit):
@@ -36,7 +33,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     """
     classifier.train()
 
-    eps = eval(args.epsilon)
+    eps = eval(args.epsilon) / std_
     eps_iter = eval(args.epsilon_iter)
 
     loss_meter = AverageMeter('loss')
@@ -45,7 +42,9 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     for batch_idx, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
         # start with uniform noise
-        delta = torch.zeros_like(x).uniform_(-eps, eps)  # set to zero before interations on each mini-batch
+        delta = torch.zeros_like(x)
+        for i in range(len(eps)):
+            delta[:, i, :, :].uniform_(-eps[i].item(), eps[i].item()) # set to zero before interations on each mini-batch
         delta.requires_grad_()
         delta = clamp(delta, clip_min - x, clip_max - x)
 
