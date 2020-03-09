@@ -118,12 +118,12 @@ def run(args: DictConfig) -> None:
 
     optimizer = SGD(classifier.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
     lr_steps = args.n_epochs * len(train_loader)
-    lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
-                          step_size_up=lr_steps/2, step_size_down=lr_steps/2)
+    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
+                                      step_size_up=lr_steps/2, step_size_down=lr_steps/2)
 
     optimal_loss = 1e5
     for epoch in range(1, args.n_epochs + 1):
-        loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=lr_scheduler)
+        loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
         if loss < optimal_loss:
             optimal_loss = loss
             torch.save(classifier.state_dict(), '{}_at.pth'.format(args.classifier_name))
