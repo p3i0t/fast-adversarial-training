@@ -33,7 +33,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     """
     classifier.train()
 
-    eps = eval(args.epsilon) / std_
+    eps = eval(args.epsilon) / std_.to(args.device)
     eps_iter = eval(args.epsilon_iter)
 
     loss_meter = AverageMeter('loss')
@@ -53,7 +53,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
 
         # update delta with grad
         delta = clamp(delta + torch.sign(grad_delta) * eps_iter, -eps, eps)
-        delta = clamp(delta, clip_min - x, clip_max - x)
+        delta = clamp(delta, clip_min.to(args.device) - x, clip_max.to(args.device) - x)
 
         # real forward
         logits = classifier(x + delta)
