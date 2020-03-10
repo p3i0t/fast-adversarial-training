@@ -4,8 +4,12 @@ from torchvision import datasets, transforms
 from torchvision.models import resnet18, resnet34, resnet50,\
     wide_resnet50_2, wide_resnet101_2, resnext50_32x4d, resnext101_32x8d
 
-cifar10_mean = [0.5] * 3
-cifar10_std = [0.5] * 3
+
+cifar10_mean = 0.5
+cifar10_std = 0.5
+
+cifar10_mean_ = [0.5] * 3
+cifar10_std_ = [0.5] * 3
 
 clip_min = -1.
 clip_max = 1.
@@ -44,12 +48,12 @@ def get_dataset(data_name='cifar10', data_dir='data', train=True, crop_flip=True
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize(cifar10_mean, cifar10_std)
+        transforms.Normalize(cifar10_mean_, cifar10_std_)
     ])
 
     transform_3d = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(cifar10_mean, cifar10_std)
+        transforms.Normalize(cifar10_mean_, cifar10_std_)
     ])
 
     if train:
