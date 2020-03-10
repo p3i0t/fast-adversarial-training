@@ -129,7 +129,7 @@ def eval_epoch(model, data_loader, args, adversarial=False):
     model.eval()
     for i, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
-        if adversarial is True
+        if adversarial is True:
             delta = attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts)
         else:
             delta = 0.
