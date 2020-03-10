@@ -7,11 +7,8 @@ from torchvision.models import resnet18, resnet34, resnet50,\
 cifar10_mean = [0.5] * 3
 cifar10_std = [0.5] * 3
 
-mean_ = torch.FloatTensor(cifar10_mean).view(3, 1, 1)
-std_ = torch.FloatTensor(cifar10_std).view(3, 1, 1)
-
-clip_min = (0. - mean_) / std_
-clip_max = (1. - mean_) / std_
+clip_min = -1.
+clip_max = 1.
 
 
 class AverageMeter(object):

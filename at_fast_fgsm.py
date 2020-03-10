@@ -7,7 +7,8 @@ from torch.optim import SGD, lr_scheduler
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from advertorch.attacks import LinfPGDAttack
-from utils import cal_parameters, get_dataset, get_model, AverageMeter, clip_max, clip_min, mean_, std_
+from utils import cal_parameters, get_dataset, get_model, AverageMeter
+import utils
 
 from preact_resnet import PreActResNet18
 
@@ -33,8 +34,9 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     """
     classifier.train()
 
-    eps = eval(args.epsilon) / std_.to(args.device)
-    eps_iter = eval(args.epsilon_iter)
+    # ajust according to std.
+    eps = eval(args.epsilon) / utils.cifar10_std
+    eps_iter = eval(args.epsilon_iter) / utils.cifar10_std
 
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
@@ -42,18 +44,16 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     for batch_idx, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
         # start with uniform noise
-        delta = torch.zeros_like(x)
-        for i in range(len(eps)):
-            delta[:, i, :, :].uniform_(-eps[i].item(), eps[i].item()) # set to zero before interations on each mini-batch
+        delta = torch.zeros_like(x).uniform_(-eps, eps)
         delta.requires_grad_()
-        delta = clamp(delta, clip_min.to(args.device) - x, clip_max.to(args.device) - x)
+        delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
         loss = F.cross_entropy(classifier(x + delta), y)
         grad_delta = torch.autograd.grad(loss, delta)[0].detach()  # get grad of noise
 
         # update delta with grad
-        delta = clamp(delta + torch.sign(grad_delta) * eps_iter, -eps, eps)
-        delta = clamp(delta, clip_min.to(args.device) - x, clip_max.to(args.device) - x)
+        delta = (delta + torch.sign(grad_delta) * eps_iter).clamp_(-eps, eps)
+        delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
         # real forward
         logits = classifier(x + delta)
@@ -62,6 +62,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
         if scheduler:
             scheduler.step()
 
@@ -72,63 +73,85 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     return loss_meter.avg, acc_meter.avg
 
 
-def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None):
-    max_loss = torch.zeros(y.shape[0]).cuda()
-    max_delta = torch.zeros_like(X).cuda()
-    for zz in range(restarts):
-        delta = torch.zeros_like(X).cuda()
-        for i in range(len(epsilon)):
-            delta[:, i, :, :].uniform_(-epsilon[i].item(), epsilon[i][0][0].item())
-        delta.data = clamp(delta, clip_min.cuda() - X, clip_max.cuda() - X)
+def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
+    """
+    Perform PGD attack on one mini-batch.
+    :param model: pytorch model.
+    :param x: x of minibatch.
+    :param y: y of minibatch.
+    :param eps: L-infinite norm budget.
+    :param eps_iter: step size for each iteration.
+    :param attack_iters: number of iterations.
+    :param restarts:  number of restart times
+    :return: best adversarial perturbations delta in all restarts
+    """
+    assert x.device == y.device
+    max_loss = torch.zeros_like(y)
+    max_delta = torch.zeros_like(x)
+
+    for i in range(restarts):
+        delta = torch.zeros_like(x).uniform_(-eps, eps)
+        delta.data = clamp(delta, utils.clip_min - x, utils.clip_max - x)
         delta.requires_grad = True
 
         for _ in range(attack_iters):
-            output = model(X + delta)
-            index = torch.where(output.max(1)[1] == y)
+            logits = model(x + delta)
+            # index = torch.where(output.max(1)[1] == y)
+            index = torch.where(logits.argmax(dim=1) == y)  # get the correct predictions, pgd performed only on them
             if len(index[0]) == 0:
                 break
-            loss = F.cross_entropy(output, y)
+            loss = F.cross_entropy(logits, y)
+            loss.backward()
 
+            # select & update
             grad = delta.grad.detach()
-            d = delta[index[0], :, :, :]
-            g = grad[index[0], :, :, :]
-            d = clamp(d + alpha * torch.sign(g), -epsilon, epsilon)
-            d = clamp(d, clip_min.cuda() - X[index[0], :, :, :], clip_max.cuda() - X[index[0], :, :, :])
-            delta.data[index[0], :, :, :] = d
+            delta_update = (delta[index] + eps_iter * torch.sign(grad[index])).clamp_(-eps, eps)
+            delta_update = clamp(delta_update, utils.clip_min - x[index], utils.clip_max - x[index])
+
+            # write back
+            delta.data[index] = delta_update
             delta.grad.zero_()
-        all_loss = F.cross_entropy(model(X+delta), y, reduction='none').detach()
+
+        all_loss = F.cross_entropy(model(x + delta), y, reduction='none').detach()
         max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
         max_loss = torch.max(max_loss, all_loss)
     return max_delta
 
 
-def evaluate_pgd(test_loader, model, attack_iters, restarts):
-    epsilon = (8 / 255.) / std_.cuda()
-    alpha = (2 / 255.) / std_.cuda()
-    pgd_loss = 0
-    pgd_acc = 0
-    n = 0
+def eval_epoch_pgd(model, test_loader, args):
+    """Self-implemented PGD evaluation"""
+    eps = (8 / 255.) / utils.cifar10_std
+    eps_iter = (2 / 255.) / utils.cifar10_std
+    attack_iters = 50
+    restarts = 2
+
+    loss_meter = AverageMeter('loss')
+    acc_meter = AverageMeter('Acc')
     model.eval()
-    for i, (X, y) in enumerate(test_loader):
-        X, y = X.cuda(), y.cuda()
-        pgd_delta = attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts)
+    for i, (x, y) in enumerate(test_loader):
+        x, y = x.to(args.device), y.to(args.device)
+        delta = attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts)
         with torch.no_grad():
-            output = model(X + pgd_delta)
-            loss = F.cross_entropy(output, y)
-            pgd_loss += loss.item() * y.size(0)
-            pgd_acc += (output.max(1)[1] == y).sum().item()
-            n += y.size(0)
-    return pgd_loss/n, pgd_acc/n
+            logits = model(x + delta)
+            loss = F.cross_entropy(logits, y)
+
+            loss_meter.update(loss.item(), x.size(0))
+            acc = (logits.argmax(dim=1) == y).float().mean().item()
+            acc_meter.update(acc, x.size(0))
+
+    return loss_meter.avg, acc_meter.avg
 
 
 def eval_epoch(classifier, data_loader, args, adversarial=False):
+    """Eval epoch, PGD with advertorch."""
     classifier.eval()
 
     eps = eval(args.epsilon)
     eps_iter = eval(args.epsilon_iter)
 
     if adversarial is True:
-        adversary = LinfPGDAttack(classifier, eps=eps, eps_iter=eps_iter, clip_min=-1., clip_max=1.)
+        adversary = LinfPGDAttack(classifier, eps=eps, eps_iter=eps_iter,
+                                  clip_min=utils.clip_min, clip_max=utils.clip_max)
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
 
@@ -184,8 +207,8 @@ def run(args: DictConfig) -> None:
     logger.info('Clean loss: {:.4f}, acc: {:.4f}'.format(clean_loss, clean_acc))
     logger.info('[Advertorch]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
 
-    adv_loss, adv_acc = evaluate_pgd(test_loader, classifier, attack_iters=50, restarts=1)
-    logger.info('[Other]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
+    adv_loss, adv_acc = eval_epoch_pgd(classifier, test_loader, args)
+    logger.info('[Self-implementation]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
 
 
 if __name__ == '__main__':
