@@ -6,7 +6,6 @@ import torch
 from torch.optim import SGD, lr_scheduler
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from advertorch.attacks import LinfPGDAttack
 from utils import cal_parameters, get_dataset, get_model, AverageMeter
 import utils
 
@@ -118,19 +117,23 @@ def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
     return max_delta
 
 
-def eval_epoch_pgd(model, test_loader, args):
+def eval_epoch(model, data_loader, args, adversarial=False):
     """Self-implemented PGD evaluation"""
-    eps = (8 / 255.) / utils.cifar10_std
-    eps_iter = (2 / 255.) / utils.cifar10_std
+    eps = eval(args.epsilon) / utils.cifar10_std
+    eps_iter = eval(args.pgd_epsilon_iter) / utils.cifar10_std
     attack_iters = 50
     restarts = 2
 
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
     model.eval()
-    for i, (x, y) in enumerate(test_loader):
+    for i, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
-        delta = attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts)
+        if adversarial is True
+            delta = attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts)
+        else:
+            delta = 0.
+
         with torch.no_grad():
             logits = model(x + delta)
             loss = F.cross_entropy(logits, y)
@@ -138,35 +141,6 @@ def eval_epoch_pgd(model, test_loader, args):
             loss_meter.update(loss.item(), x.size(0))
             acc = (logits.argmax(dim=1) == y).float().mean().item()
             acc_meter.update(acc, x.size(0))
-
-    return loss_meter.avg, acc_meter.avg
-
-
-def eval_epoch(classifier, data_loader, args, adversarial=False):
-    """Eval epoch, PGD with advertorch."""
-    classifier.eval()
-
-    eps = eval(args.epsilon) / utils.cifar10_std
-    eps_iter = eval(args.epsilon_iter) / utils.cifar10_std
-
-    if adversarial is True:
-        adversary = LinfPGDAttack(classifier, eps=eps, eps_iter=eps_iter,
-                                  clip_min=utils.clip_min, clip_max=utils.clip_max)
-    loss_meter = AverageMeter('loss')
-    acc_meter = AverageMeter('Acc')
-
-    for batch_idx, (x, y) in enumerate(data_loader):
-        x, y = x.to(args.device), y.to(args.device)
-        if adversarial is True:
-            x_ = adversary.perturb(x, y)
-        else:
-            x_ = x
-        logits = classifier(x_)
-        loss = F.cross_entropy(logits, y)
-
-        loss_meter.update(loss.item(), x.size(0))
-        acc = (logits.argmax(dim=1) == y).float().mean().item()
-        acc_meter.update(acc, x.size(0))
 
     return loss_meter.avg, acc_meter.avg
 
@@ -190,7 +164,7 @@ def run(args: DictConfig) -> None:
     test_loader = DataLoader(dataset=test_data, batch_size=args.n_batch_test, shuffle=False)
 
     if args.inference is True:
-        classifier.loat_state_dict(torch.load('{}_at.pth'.format(args.classifier_name)))
+        classifier.load_state_dict(torch.load('{}_at.pth'.format(args.classifier_name)))
         logger.info('Load classifier from checkpoint')
     else:
         optimizer = SGD(classifier.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -209,10 +183,7 @@ def run(args: DictConfig) -> None:
     clean_loss, clean_acc = eval_epoch(classifier, test_loader, args, adversarial=False)
     adv_loss, adv_acc = eval_epoch(classifier, test_loader, args, adversarial=True)
     logger.info('Clean loss: {:.4f}, acc: {:.4f}'.format(clean_loss, clean_acc))
-    logger.info('[Advertorch]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
-
-    adv_loss, adv_acc = eval_epoch_pgd(classifier, test_loader, args)
-    logger.info('[Self-implementation]-Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
+    logger.info('Adversarial loss: {:.4f}, acc: {:.4f}'.format(adv_loss, adv_acc))
 
 
 if __name__ == '__main__':
