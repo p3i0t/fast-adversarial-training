@@ -146,8 +146,8 @@ def eval_epoch(classifier, data_loader, args, adversarial=False):
     """Eval epoch, PGD with advertorch."""
     classifier.eval()
 
-    eps = eval(args.epsilon)
-    eps_iter = eval(args.epsilon_iter)
+    eps = eval(args.epsilon) / utils.cifar10_std
+    eps_iter = eval(args.epsilon_iter) / utils.cifar10_std
 
     if adversarial is True:
         adversary = LinfPGDAttack(classifier, eps=eps, eps_iter=eps_iter,
@@ -189,18 +189,22 @@ def run(args: DictConfig) -> None:
     train_loader = DataLoader(dataset=train_data, batch_size=args.n_batch_train, shuffle=True)
     test_loader = DataLoader(dataset=test_data, batch_size=args.n_batch_test, shuffle=False)
 
-    optimizer = SGD(classifier.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
-    lr_steps = args.n_epochs * len(train_loader)
-    scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
-                                      step_size_up=lr_steps/2, step_size_down=lr_steps/2)
+    if args.inference is True:
+        classifier.loat_state_dict(torch.load('{}_at.pth'.format(args.classifier_name)))
+        logger.info('Load classifier from checkpoint')
+    else:
+        optimizer = SGD(classifier.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
+        lr_steps = args.n_epochs * len(train_loader)
+        scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
+                                          step_size_up=lr_steps/2, step_size_down=lr_steps/2)
 
-    optimal_loss = 1e5
-    for epoch in range(1, args.n_epochs + 1):
-        loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
-        if loss < optimal_loss:
-            optimal_loss = loss
-            torch.save(classifier.state_dict(), '{}_at.pth'.format(args.classifier_name))
-        logger.info('Epoch {}, lr: {:.4f}, loss: {:.4f}, acc: {:.4f}'.format(epoch, scheduler.get_lr()[0], loss, acc))
+        optimal_loss = 1e5
+        for epoch in range(1, args.n_epochs + 1):
+            loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
+            if loss < optimal_loss:
+                optimal_loss = loss
+                torch.save(classifier.state_dict(), '{}_at.pth'.format(args.classifier_name))
+            logger.info('Epoch {}, lr: {:.4f}, loss: {:.4f}, acc: {:.4f}'.format(epoch, scheduler.get_lr()[0], loss, acc))
 
     clean_loss, clean_acc = eval_epoch(classifier, test_loader, args, adversarial=False)
     adv_loss, adv_acc = eval_epoch(classifier, test_loader, args, adversarial=True)
