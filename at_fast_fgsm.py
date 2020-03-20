@@ -21,6 +21,15 @@ def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
 
+def jason_shanon_loss(prob_list):
+    from functools import reduce
+    # Clamp mixture distribution to avoid exploding KL divergence
+    p_mix = reduce(lambda a, b: a + b, prob_list) / len(prob_list)
+    p_mix = p_mix.clamp(1e-7, 1.).log()
+
+    return reduce(lambda a, b: a + b, [F.kl_div(p_mix, p, reduction='batchmean') for p in prob_list]) / len(prob_list)
+
+
 def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     """
     Run one epoch.
@@ -38,6 +47,8 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     eps_iter = eval(args.epsilon_iter) / utils.cifar10_std
 
     loss_meter = AverageMeter('loss')
+    ce_meter = AverageMeter('ce_loss')
+    js_meter = AverageMeter('js_loss')
     acc_meter = AverageMeter('Acc')
 
     for batch_idx, (x, y) in enumerate(data_loader):
@@ -55,8 +66,15 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
         # real forward
-        logits = classifier(x + delta)
-        loss = F.cross_entropy(logits, y)
+        x_ = torch.cat([x, x + delta], dim=0)
+        logits = classifier(x_)
+        logits_clean, logits_adv = torch.split(logits, x.size(0))
+
+        p_clean = logits_clean.softmax(dim=1)
+        p_adv = logits_adv.softmax(dim=1)
+        ce_loss = F.cross_entropy(logits_clean, y)
+        js_loss = jason_shanon_loss([p_clean, p_adv])
+        loss = ce_loss + 4 * js_loss
 
         optimizer.zero_grad()
         loss.backward()
@@ -66,10 +84,14 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
             scheduler.step()
 
         loss_meter.update(loss.item(), x.size(0))
+        loss_meter.update(loss.item(), x.size(0))
+        ce_meter.update(ce_loss.item(), x.size(0))
+        js_meter.update(js_loss.item(), x.size(0))
+
         acc = (logits.argmax(dim=1) == y).float().mean().item()
         acc_meter.update(acc, x.size(0))
 
-    return loss_meter.avg, acc_meter.avg
+    return loss_meter.avg, ce_meter.avg, js_meter.avg, acc_meter.avg
 
 
 def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
@@ -174,11 +196,15 @@ def run(args: DictConfig) -> None:
 
         optimal_loss = 1e5
         for epoch in range(1, args.n_epochs + 1):
-            loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
+            loss, ce_loss, js_loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
+            lr = scheduler.get_lr()[0]
+            logger.info('Epoch {}, lr:{:.4f}, loss:{:.4f}, CE:{:.4f}, JS:{:.4f}, Acc:{:.4f}'
+                        .format(epoch + 1, lr, loss, ce_loss, js_loss, acc))
+
             if loss < optimal_loss:
                 optimal_loss = loss
+
                 torch.save(classifier.state_dict(), '{}_at.pth'.format(args.classifier_name))
-            logger.info('Epoch {}, lr: {:.4f}, loss: {:.4f}, acc: {:.4f}'.format(epoch, scheduler.get_lr()[0], loss, acc))
 
     clean_loss, clean_acc = eval_epoch(classifier, test_loader, args, adversarial=False)
     adv_loss, adv_acc = eval_epoch(classifier, test_loader, args, adversarial=True)
