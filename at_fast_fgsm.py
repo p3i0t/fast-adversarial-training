@@ -1,6 +1,7 @@
 import hydra
 from omegaconf import DictConfig
 import logging
+import numpy as np
 
 import torch
 from torch.optim import SGD, lr_scheduler
@@ -72,6 +73,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
 
         p_clean = logits_clean.softmax(dim=1)
         p_adv = logits_adv.softmax(dim=1)
+
         ce_loss = F.cross_entropy(logits_clean, y)
         js_loss = jason_shanon_loss([p_clean, p_adv])
         loss = ce_loss + 4 * js_loss
@@ -88,7 +90,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         ce_meter.update(ce_loss.item(), x.size(0))
         js_meter.update(js_loss.item(), x.size(0))
 
-        acc = (logits.argmax(dim=1) == y).float().mean().item()
+        acc = (logits_clean.argmax(dim=1) == y).float().mean().item()
         acc_meter.update(acc, x.size(0))
 
     return loss_meter.avg, ce_meter.avg, js_meter.avg, acc_meter.avg
@@ -167,6 +169,11 @@ def eval_epoch(model, data_loader, args, adversarial=False):
     return loss_meter.avg, acc_meter.avg
 
 
+def get_lr(step, total_steps, lr_max, lr_min):
+    """Compute learning rate according to cosine annealing schedule."""
+    return lr_min + (lr_max - lr_min) * 0.5 * (1 + np.cos(step / total_steps * np.pi))
+
+
 @hydra.main(config_path='configs/fast_fgsm_config.yaml')
 def run(args: DictConfig) -> None:
     cuda_available = torch.cuda.is_available()
@@ -189,17 +196,32 @@ def run(args: DictConfig) -> None:
         classifier.load_state_dict(torch.load('{}_at.pth'.format(args.classifier_name)))
         logger.info('Load classifier from checkpoint')
     else:
-        optimizer = SGD(classifier.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
-        lr_steps = args.n_epochs * len(train_loader)
-        scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
-                                          step_size_up=lr_steps/2, step_size_down=lr_steps/2)
+        # optimizer = SGD(classifier.parameters(), lr=args.lr_max, momentum=args.momentum, weight_decay=args.weight_decay)
+        # lr_steps = args.n_epochs * len(train_loader)
+        # scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
+        #                                   step_size_up=lr_steps/2, step_size_down=lr_steps/2)
+        #
+        optimizer = torch.optim.SGD(
+            classifier.parameters(),
+            args.learning_rate,
+            momentum=args.momentum,
+            weight_decay=args.weight_decay,
+            nesterov=True)
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: get_lr(  # pylint: disable=g-long-lambda
+                step,
+                args.n_epochs * len(train_loader),
+                1,  # lr_lambda computes multiplicative factor
+                1e-6 / args.learning_rate))
 
         optimal_loss = 1e5
         for epoch in range(1, args.n_epochs + 1):
             loss, ce_loss, js_loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
             lr = scheduler.get_lr()[0]
             logger.info('Epoch {}, lr:{:.4f}, loss:{:.4f}, CE:{:.4f}, JS:{:.4f}, Acc:{:.4f}'
-                        .format(epoch + 1, lr, loss, ce_loss, js_loss, acc))
+                        .format(epoch, lr, loss, ce_loss, js_loss, acc))
 
             if loss < optimal_loss:
                 optimal_loss = loss
