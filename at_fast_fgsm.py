@@ -2,10 +2,10 @@ import hydra
 from omegaconf import DictConfig
 import logging
 import numpy as np
-from functools import reduce
 
 import torch
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 from utils import cal_parameters, get_dataset, AverageMeter
 import utils
@@ -14,18 +14,11 @@ from preact_resnet import PreActResNet18
 
 logger = logging.getLogger(__name__)
 
+scaler = GradScaler()
+
 
 def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
-
-
-def jason_shanon_loss(prob_list):
-    # Clamp mixture distribution to avoid exploding KL divergence
-    p_mix = reduce(lambda a, b: a + b, prob_list) / len(prob_list)
-    p_mix = p_mix.clamp(1e-7, 1.).log()
-
-    kl_divs = [F.kl_div(p_mix, p, reduction='batchmean') for p in prob_list]
-    return reduce(lambda a, b: a + b, kl_divs) / len(prob_list)
 
 
 def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
@@ -45,8 +38,6 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     eps_iter = eval(args.epsilon_iter) / utils.cifar10_std
 
     loss_meter = AverageMeter('loss')
-    ce_meter = AverageMeter('ce_loss')
-    js_meter = AverageMeter('js_loss')
     acc_meter = AverageMeter('Acc')
 
     for batch_idx, (x, y) in enumerate(data_loader):
@@ -56,21 +47,23 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         delta.requires_grad_()
         delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
-        loss = F.cross_entropy(classifier(x + delta), y)
-        # get grad of noise
-        grad_delta = torch.autograd.grad(loss, delta)[0].detach()
-
-        # update delta with grad
-        delta = (delta + torch.sign(grad_delta) * eps_iter).clamp_(-eps, eps)
-        delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
-
-        # real forward
-        logits = classifier(x + delta)
-        loss = F.cross_entropy(logits, y)
-
         optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        with autocast():
+            loss = F.cross_entropy(classifier(x + delta), y)
+            # get grad of noise
+            grad_delta = torch.autograd.grad(loss, delta)[0].detach()
+
+            # update delta with grad
+            delta = (delta + torch.sign(grad_delta) * eps_iter).clamp_(-eps, eps)
+            delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
+
+            # real forward
+            logits = classifier(x + delta)
+            loss = F.cross_entropy(logits, y)
+
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
 
         if scheduler:
             scheduler.step()
