@@ -65,16 +65,8 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
         # real forward
-        x_adv = torch.cat([x, x + delta], dim=0)
-        logits = classifier(x_adv)
-        logits_clean, logits_adv = torch.split(logits, x.size(0))
-
-        p_clean = logits_clean.softmax(dim=1)
-        p_adv = logits_adv.softmax(dim=1)
-
-        ce_loss = F.cross_entropy(logits_clean, y)
-        js_loss = jason_shanon_loss([p_clean, p_adv])
-        loss = ce_loss + 4 * js_loss
+        logits = classifier(x + delta)
+        loss = F.cross_entropy(logits, y)
 
         optimizer.zero_grad()
         loss.backward()
@@ -84,14 +76,10 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
             scheduler.step()
 
         loss_meter.update(loss.item(), x.size(0))
-        loss_meter.update(loss.item(), x.size(0))
-        ce_meter.update(ce_loss.item(), x.size(0))
-        js_meter.update(js_loss.item(), x.size(0))
-
-        acc = (logits_clean.argmax(dim=1) == y).float().mean().item()
+        acc = (logits.argmax(dim=1) == y).float().mean().item()
         acc_meter.update(acc, x.size(0))
 
-    return loss_meter.avg, ce_meter.avg, js_meter.avg, acc_meter.avg
+    return loss_meter.avg, acc_meter.avg
 
 
 def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
@@ -216,10 +204,9 @@ def run(args: DictConfig) -> None:
 
         optimal_loss = 1e5
         for epoch in range(1, args.n_epochs + 1):
-            loss, ce_loss, js_loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
+            loss, acc = train_epoch(classifier, train_loader, args, optimizer, scheduler=scheduler)
             lr = scheduler.get_lr()[0]
-            logger.info('Epoch {}, lr:{:.4f}, loss:{:.4f}, CE:{:.4f}, JS:{:.4f}, Acc:{:.4f}'
-                        .format(epoch, lr, loss, ce_loss, js_loss, acc))
+            logger.info('Epoch {}, lr:{:.4f}, loss:{:.4f}, Acc:{:.4f}'.format(epoch, lr, loss, acc))
 
             if loss < optimal_loss:
                 optimal_loss = loss
