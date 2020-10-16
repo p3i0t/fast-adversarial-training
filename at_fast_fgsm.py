@@ -2,18 +2,15 @@ import hydra
 from omegaconf import DictConfig
 import logging
 import numpy as np
+from functools import reduce
 
 import torch
-from torch.optim import SGD, lr_scheduler
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from utils import cal_parameters, get_dataset, get_model, AverageMeter
+from utils import cal_parameters, get_dataset, AverageMeter
 import utils
 
 from preact_resnet import PreActResNet18
-
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +20,12 @@ def clamp(X, lower_limit, upper_limit):
 
 
 def jason_shanon_loss(prob_list):
-    from functools import reduce
     # Clamp mixture distribution to avoid exploding KL divergence
     p_mix = reduce(lambda a, b: a + b, prob_list) / len(prob_list)
     p_mix = p_mix.clamp(1e-7, 1.).log()
 
-    return reduce(lambda a, b: a + b, [F.kl_div(p_mix, p, reduction='batchmean') for p in prob_list]) / len(prob_list)
+    kl_divs = [F.kl_div(p_mix, p, reduction='batchmean') for p in prob_list]
+    return reduce(lambda a, b: a + b, kl_divs) / len(prob_list)
 
 
 def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
@@ -60,15 +57,16 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
         delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
         loss = F.cross_entropy(classifier(x + delta), y)
-        grad_delta = torch.autograd.grad(loss, delta)[0].detach()  # get grad of noise
+        # get grad of noise
+        grad_delta = torch.autograd.grad(loss, delta)[0].detach()
 
         # update delta with grad
         delta = (delta + torch.sign(grad_delta) * eps_iter).clamp_(-eps, eps)
         delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
         # real forward
-        x_ = torch.cat([x, x + delta], dim=0)
-        logits = classifier(x_)
+        x_adv = torch.cat([x, x + delta], dim=0)
+        logits = classifier(x_adv)
         logits_clean, logits_adv = torch.split(logits, x.size(0))
 
         p_clean = logits_clean.softmax(dim=1)
@@ -119,8 +117,8 @@ def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
 
         for _ in range(attack_iters):
             logits = model(x + delta)
-            # index = torch.where(output.max(1)[1] == y)
-            index = torch.where(logits.argmax(dim=1) == y)  # get the correct predictions, pgd performed only on them
+            # get the correct predictions, pgd performed only on them
+            index = torch.where(logits.argmax(dim=1) == y)
             if len(index[0]) == 0:
                 break
             loss = F.cross_entropy(logits, y)
@@ -128,11 +126,11 @@ def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
 
             # select & update
             grad = delta.grad.detach()
-            delta_update = (delta[index] + eps_iter * torch.sign(grad[index])).clamp_(-eps, eps)
-            delta_update = clamp(delta_update, utils.clip_min - x[index], utils.clip_max - x[index])
+            delta_ = (delta[index] + eps_iter * torch.sign(grad[index])).clamp_(-eps, eps)
+            delta_ = clamp(delta_, utils.clip_min - x[index], utils.clip_max - x[index])
 
             # write back
-            delta.data[index] = delta_update
+            delta.data[index] = delta_
             delta.grad.zero_()
 
         all_loss = F.cross_entropy(model(x + delta), y, reduction='none').detach()
@@ -180,8 +178,8 @@ def run(args: DictConfig) -> None:
     torch.manual_seed(args.seed)
     device = "cuda" if cuda_available and args.device == 'cuda' else "cpu"
 
-    n_classes = args.n_classes
-    #classifier = get_model(name=args.classifier_name, n_classes=n_classes).to(device)
+    # n_classes = args.n_classes
+    # classifier = get_model(name=args.classifier_name, n_classes=n_classes).to(device)
     classifier = PreActResNet18().to(device)
     logger.info('Classifier: {}, # parameters: {}'.format(args.classifier_name, cal_parameters(classifier)))
 
@@ -225,7 +223,6 @@ def run(args: DictConfig) -> None:
 
             if loss < optimal_loss:
                 optimal_loss = loss
-
                 torch.save(classifier.state_dict(), '{}_at.pth'.format(args.classifier_name))
 
     clean_loss, clean_acc = eval_epoch(classifier, test_loader, args, adversarial=False)
