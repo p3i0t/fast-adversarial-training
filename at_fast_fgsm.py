@@ -21,6 +21,10 @@ def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
 
+def swish(x):
+    return torch.sigmoid(x)*x
+
+
 def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     """
     Run one epoch.
@@ -40,6 +44,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
     loss_meter = AverageMeter('loss')
     acc_meter = AverageMeter('Acc')
 
+    act = F.relu if args.act == 'relu' else swish
     for batch_idx, (x, y) in enumerate(data_loader):
         x, y = x.to(args.device), y.to(args.device)
         # start with uniform noise
@@ -49,7 +54,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
 
         optimizer.zero_grad()
         with autocast():
-            loss = F.cross_entropy(classifier(x + delta), y)
+            loss = F.cross_entropy(classifier(x + delta, act), y)
             # get grad of noise
             grad_delta = torch.autograd.grad(loss, delta)[0].detach()
 
@@ -58,7 +63,7 @@ def train_epoch(classifier, data_loader, args, optimizer, scheduler=None):
             delta = clamp(delta, utils.clip_min - x, utils.clip_max - x)
 
             # real forward
-            logits = classifier(x + delta)
+            logits = classifier(x + delta, act)
             loss = F.cross_entropy(logits, y)
 
         scaler.scale(loss).backward()
@@ -97,7 +102,7 @@ def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
         delta.requires_grad = True
 
         for _ in range(attack_iters):
-            logits = model(x + delta)
+            logits = model(x + delta, F.relu)
             # get the correct predictions, pgd performed only on them
             index = torch.where(logits.argmax(dim=1) == y)
             if len(index[0]) == 0:
@@ -138,7 +143,7 @@ def eval_epoch(model, data_loader, args, adversarial=False):
             delta = 0.
 
         with torch.no_grad():
-            logits = model(x + delta)
+            logits = model(x + delta, F.relu)
             loss = F.cross_entropy(logits, y)
 
             loss_meter.update(loss.item(), x.size(0))
@@ -179,7 +184,6 @@ def run(args: DictConfig) -> None:
         # lr_steps = args.n_epochs * len(train_loader)
         # scheduler = lr_scheduler.CyclicLR(optimizer, base_lr=args.lr_min, max_lr=args.lr_max,
         #                                   step_size_up=lr_steps/2, step_size_down=lr_steps/2)
-        #
         optimizer = torch.optim.SGD(
             classifier.parameters(),
             args.learning_rate,
