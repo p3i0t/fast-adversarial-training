@@ -33,5 +33,5 @@ early_stop: True
 
 seed: 1234
 device: cuda
-
+act: relu
 inference: False
