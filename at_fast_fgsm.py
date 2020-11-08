@@ -119,7 +119,7 @@ def attack_pgd(model, x, y, eps, eps_iter, attack_iters, restarts):
             delta.data[index] = delta_
             delta.grad.zero_()
 
-        all_loss = F.cross_entropy(model(x + delta), y, reduction='none').detach()
+        all_loss = F.cross_entropy(model(x + delta, F.relu), y, reduction='none').detach()
         max_delta[all_loss >= max_loss] = delta.detach()[all_loss >= max_loss]
         max_loss = torch.max(max_loss, all_loss)
     return max_delta
