@@ -3,6 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def swish(x):
+    return torch.sigmoid(x)*x
+
+
 class PreActBlock(nn.Module):
     '''Pre-activation version of the BasicBlock.'''
     expansion = 1
@@ -19,11 +23,11 @@ class PreActBlock(nn.Module):
                 nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride, bias=False)
             )
 
-    def forward(self, x):
-        out = F.relu(self.bn1(x))
+    def forward(self, x, act):
+        out = act(self.bn1(x))
         shortcut = self.shortcut(x) if hasattr(self, 'shortcut') else x
         out = self.conv1(out)
-        out = self.conv2(F.relu(self.bn2(out)))
+        out = self.conv2(act(self.bn2(out)))
         out += shortcut
         return out
 
@@ -46,12 +50,12 @@ class PreActBottleneck(nn.Module):
                 nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride, bias=False)
             )
 
-    def forward(self, x):
-        out = F.relu(self.bn1(x))
+    def forward(self, x, act):
+        out = act(self.bn1(x))
         shortcut = self.shortcut(out) if hasattr(self, 'shortcut') else x
         out = self.conv1(out)
-        out = self.conv2(F.relu(self.bn2(out)))
-        out = self.conv3(F.relu(self.bn3(out)))
+        out = self.conv2(act(self.bn2(out)))
+        out = self.conv3(act(self.bn3(out)))
         out += shortcut
         return out
 
@@ -74,15 +78,23 @@ class PreActResNet(nn.Module):
         for stride in strides:
             layers.append(block(self.in_planes, planes, stride))
             self.in_planes = planes * block.expansion
-        return nn.Sequential(*layers)
+        # return nn.Sequential(*layers)  do not use sequential, which takes only 1 argument.
+        return nn.ModuleList(layers)
 
-    def forward(self, x):
+    def forward(self, x, act):
         out = self.conv1(x)
-        out = self.layer1(out)
-        out = self.layer2(out)
-        out = self.layer3(out)
-        out = self.layer4(out)
-        out = F.relu(self.bn(out))
+        for layer in self.layer1:
+            out = layer(out, act)
+
+        for layer in self.layer2:
+            out = layer(out, act)
+
+        for layer in self.layer3:
+            out = layer(out, act)
+
+        for layer in self.layer4:
+            out = layer(out, act)
+        out = act(self.bn(out))
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
@@ -90,4 +102,14 @@ class PreActResNet(nn.Module):
 
 
 def PreActResNet18():
-    return PreActResNet(PreActBlock, [2,2,2,2])
+    return PreActResNet(PreActBlock, [2, 2, 2, 2])
+
+
+if __name__ == "__main__":
+    x = torch.randn(3, 3, 32, 32)
+    m = PreActResNet18()
+    # m = PreActBlock(3, 10, 1)
+    # m = nn.Sequential(PreActBlock(3, 10, 1))  #, PreActBlock(10, 20, 1))
+    print(m)
+    o = m(x, swish)
+    print(o.size())
